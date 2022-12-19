@@ -26,15 +26,11 @@ def parse_args():
                         help="seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, this experiment will be tracked with Weights and Biases")
     parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
                         help="the wandb's project name")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="HopperBulletEnv-v0",
-                        help="the id of the environment")
-    parser.add_argument("--total-timesteps", type=int, default=5000000,
+    parser.add_argument("--total-timesteps", type=int, default=500000,
                         help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4,
                         help="the learning rate of the optimizer")
@@ -60,17 +56,15 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
-
-        wandb.init(
-            project=args.wandb_project_name,
-            sync_tensorboard=True,
-            config=vars(args),
-            name='first run with reward=arctan(new_dist-old_dist)',
-            monitor_gym=True,
-            save_code=True,
-        )
+    # import wandb
+    # wandb.init(
+    #     project=args.wandb_project_name,
+    #     sync_tensorboard=True,
+    #     config=vars(args),
+    #     name='first run with reward=arctan(new_dist-old_dist)',
+    #     monitor_gym=True,
+    #     save_code=True,
+    # )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -111,7 +105,6 @@ if __name__ == "__main__":
         next_obs, rewards, dones, infos, new_dist = env_wrapper.step_env(envs, actions, dist)
 
         for info in infos:
-            print(infos)
             if "episode" in info.keys():
                 print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                 writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
@@ -157,6 +150,30 @@ if __name__ == "__main__":
                 for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
             t3 = time.time()
+
+            if global_step % 10000 == 0 or global_step == args.total_timesteps - 1:
+                test_env = env_wrapper.create_test_env()
+                test_done = False
+                test_state = env_wrapper.reset_test_env(test_env)
+                # TODO: remove hardcode
+                test_cur_dist = np.sqrt((0.05 ** 2) * 2)
+                test_sum_reward = 0
+                j = 0
+                with torch.no_grad():
+                    while not test_done and j < 1000:
+                        test_action = actor(torch.FloatTensor(test_state).to(device))
+                        # print(test_action, test_state)
+                        test_action = test_action.cpu().numpy().clip(test_env.action_space.low,
+                                                                     test_env.action_space.high)
+                        test_state, test_cur_reward, test_done, test_info, test_cur_dist = env_wrapper.step_test_env(
+                            test_env,
+                            test_action,
+                            test_cur_dist)
+                        j += 1
+                        test_sum_reward += test_cur_reward
+
+                writer.add_scalar("reward/step", test_sum_reward, global_step)
+
             if global_step % 100 == 0:
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
@@ -166,6 +183,5 @@ if __name__ == "__main__":
                 writer.add_scalar("second/SPS", (t3 - t2), global_step)
                 writer.add_scalar("charts/SPS", (global_step / (time.time() - start_time)), global_step)
 
-        # t3 = time.time()
     envs.close()
     writer.close()
