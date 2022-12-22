@@ -84,6 +84,7 @@ def normalize_test_space(space):
 
     return obs
 
+
 def make_env(goal_trajectory=None):
     if goal_trajectory is None:
         goal_trajectory = [(0, [0.05, 0.05, 0.0325])]
@@ -109,11 +110,14 @@ def create_test_env(goal_trajectory=None):
 
 
 def reset_env(env):
-    return normalize_space(env.reset())
+    obs = env.reset()
+    return normalize_space(obs), np.sqrt(np.sum((obs['object_observation']['position'] - obs['desired_goal']) ** 2))
 
 
 def reset_test_env(env):
-    return normalize_test_space(env.reset())
+    obs = env.reset()
+    return normalize_test_space(obs), np.sqrt(
+        np.sum((obs['object_observation']['position'] - obs['desired_goal']) ** 2))
 
 
 def step_env(env, action, prev_dist):
@@ -122,7 +126,8 @@ def step_env(env, action, prev_dist):
     if abs(next_obs['object_observation']['position'][0][0]) > 2 and abs(
             next_obs['object_observation']['position'][0][1]) > 2 and abs(
         next_obs['object_observation']['position'][0][2]) > 2:
-        reward = np.array(-9999999999)
+        reward = np.array([-100])
+        dones = [True]
     else:
         reward = np.array([np.arctan(100 * (prev_dist - new_dist))])
     # print(np.arctan(prev_dist - new_dist), new_dist, next_obs['object_observation'])
@@ -135,7 +140,8 @@ def step_test_env(env, action, prev_dist):
     if abs(next_obs['object_observation']['position'][0]) > 2 and abs(
             next_obs['object_observation']['position'][1]) > 2 and abs(
         next_obs['object_observation']['position'][2]) > 2:
-        reward = -9999999999
+        reward = -100
+        dones = True
     else:
         reward = np.arctan(100 * (prev_dist - new_dist))
     # print(reward, new_dist, next_obs['object_observation']['position'])

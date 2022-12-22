@@ -89,8 +89,7 @@ if __name__ == "__main__":
     buffer = ExpirienceReplay(args.buffer_size)
 
     start_time = time.time()
-    obs = env_wrapper.reset_env(envs)
-    dist = np.sqrt((0.05 ** 2) * 2)
+    obs, dist = env_wrapper.reset_env(envs)
 
     for global_step in range(args.total_timesteps):
         if global_step < args.learning_starts:
@@ -98,7 +97,7 @@ if __name__ == "__main__":
         else:
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
-                actions += torch.normal(0, actor.action_scale * args.exploration_noise)
+                actions += torch.randn_like(actions) * actor.action_scale * args.exploration_noise
                 actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
         t1 = time.time()
 
@@ -111,12 +110,10 @@ if __name__ == "__main__":
                 writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
                 break
 
-        real_next_obs = next_obs.copy()
-
         for idx, d in enumerate(dones):
             if d:
-                real_next_obs[idx] = env_wrapper.reset_env(envs)
-        buffer.add((obs, actions, real_next_obs, rewards, dones))
+                next_obs[idx] = env_wrapper.reset_env(envs)
+        buffer.add((obs, actions, next_obs, rewards, dones))
 
         obs = next_obs
         dist = new_dist
@@ -154,15 +151,14 @@ if __name__ == "__main__":
             if global_step % 10000 == 0 or global_step == args.total_timesteps - 1:
                 test_env = env_wrapper.create_test_env()
                 test_done = False
-                test_state = env_wrapper.reset_test_env(test_env)
+                test_state, test_cur_dist = env_wrapper.reset_test_env(test_env)
                 # TODO: remove hardcode
-                test_cur_dist = np.sqrt((0.05 ** 2) * 2)
                 test_sum_reward = 0
                 j = 0
                 with torch.no_grad():
                     while not test_done and j < 1000:
                         test_action = actor(torch.FloatTensor(test_state).to(device))
-                        # print(test_action, test_state)
+                        print(test_action, test_state)
                         test_action = test_action.cpu().numpy().clip(test_env.action_space.low,
                                                                      test_env.action_space.high)
                         test_state, test_cur_reward, test_done, test_info, test_cur_dist = env_wrapper.step_test_env(
@@ -170,6 +166,7 @@ if __name__ == "__main__":
                             test_action,
                             test_cur_dist)
                         j += 1
+                        print(test_cur_reward)
                         test_sum_reward += test_cur_reward
 
                 writer.add_scalar("reward/step", test_sum_reward, global_step)
