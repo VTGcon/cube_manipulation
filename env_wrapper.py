@@ -125,7 +125,7 @@ def step_test_env(env, action, prev_dist, step_size):
         dones = True
     if infos['time_index'] > 1200 * step_size:
         dones = True
-    print(reward, next_obs)
+    # print(reward, next_obs)
     return normalize_test_space(next_obs), reward, dones, infos, new_dist
 
 
