@@ -1,12 +1,9 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ddpg/#ddpg_continuous_actionpy
 import argparse
-import importlib
-import os
+import json
 import random
 import time
 from distutils.util import strtobool
 
-import gym
 import numpy as np
 import pybullet_envs  # noqa
 import torch
@@ -15,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import sys
 
 sys.path.append('../rrc_example_package`/')
+sys.path.append('../../rrc_example_package')
 import env_wrapper
 from experience_replay import ExpirienceReplay
 
@@ -22,6 +20,8 @@ from experience_replay import ExpirienceReplay
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
+    parser.add_argument("--step-size", type=int, default=5,
+                        help="size of one step in env")
     parser.add_argument("--seed", type=int, default=1,
                         help="seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -30,7 +30,7 @@ def parse_args():
                         help="the wandb's project name")
 
     # Algorithm specific arguments
-    parser.add_argument("--total-timesteps", type=int, default=500000,
+    parser.add_argument("--total-timesteps", type=int, default=3000000,
                         help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4,
                         help="the learning rate of the optimizer")
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    envs = env_wrapper.create_vector_env()
+    envs = env_wrapper.create_vector_env(step_size=args.step_size)
     actor = env_wrapper.Actor(envs).to(device)
     qf1 = env_wrapper.QNetwork(envs).to(device)
     qf1_target = env_wrapper.QNetwork(envs).to(device)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
     start_time = time.time()
     obs, dist = env_wrapper.reset_env(envs)
-
+    zzxc = 0
     for global_step in range(args.total_timesteps):
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
@@ -98,10 +98,12 @@ if __name__ == "__main__":
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
                 actions += torch.randn_like(actions) * actor.action_scale * args.exploration_noise
-                actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
+                actions = actions.cpu().numpy().clip(
+                    envs.single_action_space.low,
+                    envs.single_action_space.high)
         t1 = time.time()
 
-        next_obs, rewards, dones, infos, new_dist = env_wrapper.step_env(envs, actions, dist)
+        next_obs, rewards, dones, infos, new_dist = env_wrapper.step_env(envs, actions, dist, args.step_size)
 
         for info in infos:
             if "episode" in info.keys():
@@ -112,7 +114,7 @@ if __name__ == "__main__":
 
         for idx, d in enumerate(dones):
             if d:
-                next_obs[idx] = env_wrapper.reset_env(envs)
+                next_obs[idx] = env_wrapper.reset_env(envs)[idx]
         buffer.add((obs, actions, next_obs, rewards, dones))
 
         obs = next_obs
@@ -148,29 +150,43 @@ if __name__ == "__main__":
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
             t3 = time.time()
 
+            #testing actor
             if global_step % 10000 == 0 or global_step == args.total_timesteps - 1:
-                test_env = env_wrapper.create_test_env()
+                test_env = env_wrapper.create_test_env(step_size=args.step_size)
                 test_done = False
                 test_state, test_cur_dist = env_wrapper.reset_test_env(test_env)
-                # TODO: remove hardcode
                 test_sum_reward = 0
                 j = 0
+                total_actions = []
                 with torch.no_grad():
-                    while not test_done and j < 1000:
+                    while not test_done and j < 1200:
                         test_action = actor(torch.FloatTensor(test_state).to(device))
-                        print(test_action, test_state)
-                        test_action = test_action.cpu().numpy().clip(test_env.action_space.low,
-                                                                     test_env.action_space.high)
+                        test_action = test_action.cpu().numpy().clip(
+                            test_env.action_space.low,
+                            test_env.action_space.high)
+                        total_actions.append(test_action.tolist())
                         test_state, test_cur_reward, test_done, test_info, test_cur_dist = env_wrapper.step_test_env(
                             test_env,
                             test_action,
-                            test_cur_dist)
+                            test_cur_dist,
+                            args.step_size
+                        )
                         j += 1
-                        print(test_cur_reward)
                         test_sum_reward += test_cur_reward
-
+                if test_sum_reward > 0.5:
+                    with open('actions' + str(zzxc) + '.json', mode='w') as file:
+                        file.write(json.dumps(total_actions))
+                    zzxc += 1
+                print(test_sum_reward)
+                test_env.close()
                 writer.add_scalar("reward/step", test_sum_reward, global_step)
+                writer.add_scalar("dist/step", test_cur_dist, global_step)
 
+            #saving model
+            if global_step % 100000 == 0 or global_step == args.total_timesteps - 1:
+                torch.save(actor.state_dict(), "model.zip")
+
+            #saving statistics
             if global_step % 100 == 0:
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
